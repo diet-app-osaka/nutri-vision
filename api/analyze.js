@@ -1,21 +1,34 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-export default async function handler(req, res) {
+export const config = {
+  runtime: 'edge',
+};
+
+export default async function handler(req) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), { 
+      status: 405, 
+      headers: { 'Content-Type': 'application/json' } 
+    });
   }
 
   try {
-    const { image } = req.body;
+    const body = await req.json();
+    const { image } = body;
+    
     if (!image) {
-      return res.status(400).json({ error: 'Image data is required' });
+      return new Response(JSON.stringify({ error: 'Image data is required' }), { 
+        status: 400,
+        headers: { 'Content-Type': 'application/json' } 
+      });
     }
 
-    // Vercelに設定した環境変数（VITE_GEMINI_API_KEY）を使用
     const API_KEY = process.env.VITE_GEMINI_API_KEY;
     if (!API_KEY) {
-      console.error("API key is not set in environment variables");
-      return res.status(500).json({ error: 'Server configuration error' });
+      return new Response(JSON.stringify({ error: 'API Key is missing in Vercel settings' }), { 
+        status: 500,
+        headers: { 'Content-Type': 'application/json' } 
+      });
     }
 
     const genAI = new GoogleGenerativeAI(API_KEY);
@@ -60,15 +73,20 @@ export default async function handler(req, res) {
     const response = await result.response;
     const text = response.text();
     
-    // Extract JSON from response if it contains markdown code blocks
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      return res.status(200).json(JSON.parse(jsonMatch[0]));
+      return new Response(JSON.stringify(JSON.parse(jsonMatch[0])), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
     
     throw new Error("Failed to parse AI response");
   } catch (error) {
-    console.error("Server API Error:", error);
-    return res.status(500).json({ error: 'Failed to analyze image' });
+    console.error("Server API Error:", error.message || error);
+    return new Response(JSON.stringify({ error: error.message || 'Failed to analyze image' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 }
