@@ -1,5 +1,3 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
 export const config = {
   runtime: 'edge',
 };
@@ -31,9 +29,6 @@ export default async function handler(req) {
       });
     }
 
-    const genAI = new GoogleGenerativeAI(API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
     const prompt = `
     Analyze this meal image and estimate its nutritional content.
     Return the result strictly in the following JSON format:
@@ -62,16 +57,47 @@ export default async function handler(req) {
     Return ONLY the JSON string without any markdown formatting like \`\`\`json.
   `;
 
-    const imagePart = {
-      inlineData: {
-        data: image.split(",")[1],
-        mimeType: "image/jpeg",
-      },
-    };
+    // Use direct REST API instead of SDK for better Edge Runtime compatibility
+    // Disable thinking mode to keep response time within Vercel's 25s timeout
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  mimeType: "image/jpeg",
+                  data: image.split(",")[1],
+                }
+              }
+            ]
+          }],
+          generationConfig: {
+            temperature: 0.4,
+            thinkingConfig: {
+              thinkingBudget: 0
+            }
+          }
+        })
+      }
+    );
 
-    const result = await model.generateContent([prompt, imagePart]);
-    const response = await result.response;
-    const text = response.text();
+    const data = await res.json();
+
+    if (data.error) {
+      console.error("Gemini API Error:", JSON.stringify(data.error));
+      throw new Error(data.error.message || 'Gemini API error');
+    }
+
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) {
+      console.error("Unexpected response structure:", JSON.stringify(data).substring(0, 500));
+      throw new Error("No text in AI response");
+    }
     
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
@@ -81,7 +107,7 @@ export default async function handler(req) {
       });
     }
     
-    throw new Error("Failed to parse AI response");
+    throw new Error("Failed to parse AI response as JSON");
   } catch (error) {
     console.error("Server API Error:", error.message || error);
     return new Response(JSON.stringify({ error: error.message || 'Failed to analyze image' }), {
@@ -90,3 +116,4 @@ export default async function handler(req) {
     });
   }
 }
+
