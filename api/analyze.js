@@ -58,38 +58,54 @@ export default async function handler(req) {
   `;
 
     // Use direct REST API instead of SDK for better Edge Runtime compatibility
-    // Disable thinking mode to keep response time within Vercel's 25s timeout
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: prompt },
-              {
-                inlineData: {
-                  mimeType: "image/jpeg",
-                  data: image.split(",")[1],
-                }
-              }
-            ]
-          }],
-          generationConfig: {
-            temperature: 0.4,
-            thinkingConfig: {
-              thinkingBudget: 0
-            }
-          }
-        })
-      }
-    );
+    let data = null;
+    let attempts = 0;
+    const maxAttempts = 3;
 
-    const data = await res.json();
+    while (attempts < maxAttempts) {
+      attempts++;
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: prompt },
+                {
+                  inlineData: {
+                    mimeType: "image/jpeg",
+                    data: image.split(",")[1],
+                  }
+                }
+              ]
+            }],
+            generationConfig: {
+              temperature: 0.4
+            }
+          })
+        }
+      );
+
+      data = await res.json();
+
+      // エラーがない場合はループを抜ける
+      if (!data.error) {
+        break;
+      }
+
+      // 429エラー（リクエスト制限）の場合は、2秒待って再試行する
+      if (data.error.code === 429 && attempts < maxAttempts) {
+        console.warn(`Gemini API 429 rate limit hit in nutrition app. Retrying in 2 seconds (Attempt ${attempts}/${maxAttempts})...`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      } else {
+        break;
+      }
+    }
 
     if (data.error) {
-      console.error("Gemini API Error:", JSON.stringify(data.error));
+      console.error("Gemini API Error after retries:", JSON.stringify(data.error));
       throw new Error(data.error.message || 'Gemini API error');
     }
 
